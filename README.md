@@ -14,7 +14,7 @@ To make sure your setup works, you could run `pytest tests/`.
 
 ## Dataset
 
-We first download the [RealEstate10K](https://google.github.io/realestate10k/) dataset using the script [`scripts/gen_imgs.py`](scripts/gen_imgs.py). Then we run [`scripts/gen_transforms.py`](scripts/gen_transforms.py) and [`scripts/data_processes.py`](scripts/data_processes.py) to convert the data into our data format.
+We first download the [RealEstate10K](https://google.github.io/realestate10k/) dataset using the script [`scripts/gen_imgs.py`](scripts/gen_imgs.py). Then we run [`scripts/gen_transforms.py`](scripts/gen_transforms.py) and [`scripts/data_processes.py`](scripts/data_preprocess.py) to convert the data into our data format.
 
 Note we were not able to download all sequences as some of them are already invalid. We mark all sequences that we used for training and validation in the file [`assets/test_split_re10k.txt`](assets/test_split_re10k.txt) and [`assets/train_split_re10k.txt`](assets/train_split_re10k.txt) for reproducibility.
 

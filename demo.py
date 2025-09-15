@@ -22,6 +22,7 @@
 # SOFTWARE.
 
 import torch
+import torch.nn.functional as F
 
 from prope.per_token_camera import PropeDotProductAttention
 from prope.utils.functional import random_SE3, random_SO3
@@ -43,16 +44,19 @@ def demo():
     num_heads = 4
     head_dim = 16
 
-    # Some tokens before the attention.
-    q = torch.randn(batch, num_heads, seqlen, head_dim)
-    k = torch.randn(batch, num_heads, seqlen, head_dim)
-    v = torch.randn(batch, num_heads, seqlen, head_dim)
-
     # Camera parameters for each token.
-    # Note: if there are some tokens do not have camera information (e.g., language tokens),
-    # you can set the corresponding viewmats and Ks to identity matrices for those tokens.
     viewmats = random_SE3(batch_size=(batch, seqlen))  # (batch, seqlen, 4, 4)
     Ks = random_SO3(batch_size=(batch, seqlen))  # (batch, seqlen, 3, 3)
+
+    # Assuming there are some tokens do not have camera information (e.g., language tokens),
+    # It does not matter if they are before or after the camera tokens. We will split them out
+    # and only apply PRoPE to the camera tokens.
+    seqlen_other_modalities = 10
+
+    # Q/K/V right before the F.scaled_dot_product_attention. Assume multimodal.
+    q = torch.randn(batch, num_heads, seqlen + seqlen_other_modalities, head_dim)
+    k = torch.randn(batch, num_heads, seqlen + seqlen_other_modalities, head_dim)
+    v = torch.randn(batch, num_heads, seqlen + seqlen_other_modalities, head_dim)
 
     # Apply F.scaled_dot_product_attention with PRoPE camera encoding.
     prope = PropeDotProductAttention(
@@ -62,7 +66,16 @@ def demo():
         image_width=image_width,
         image_height=image_height,
     )
-    o = prope(q, k, v, viewmats, Ks)  # (batch, num_heads, seqlen, head_dim)
+    prope._precompute_and_cache_apply_fns(viewmats, Ks)
+
+    # Apply PRoPE to *only* the camera tokens. Tokens without camera information are not affected.
+    kwargs = {}
+    q = torch.cat([prope._apply_to_q(q[:, :, :seqlen, :]), q[:, :, seqlen:, :]], dim=2)
+    k = torch.cat([prope._apply_to_kv(k[:, :, :seqlen, :]), k[:, :, seqlen:, :]], dim=2)
+    v = torch.cat([prope._apply_to_kv(v[:, :, :seqlen, :]), v[:, :, seqlen:, :]], dim=2)
+    # Here you could add pass in other args like dropout etc.
+    o = F.scaled_dot_product_attention(q, k, v, **kwargs)
+    o = torch.cat([prope._apply_to_o(o[:, :, :seqlen, :]), o[:, :, seqlen:, :]], dim=2)
 
 
 if __name__ == "__main__":

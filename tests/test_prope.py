@@ -21,21 +21,25 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import jax
-import numpy as np
+from typing import Tuple
+
 import pytest
 import torch
 
 # Enable highest precision
-jax.config.update("jax_enable_x64", True)
 torch.set_default_dtype(torch.float64)
 
-from prope.jax import PropeDotProductAttention as PropeDotProductAttentionJax
-from prope.torch import PropeDotProductAttention as PropeDotProductAttentionTorch
+from prope.per_img_camera import (
+    PropeDotProductAttention as PerImgCameraPropeDotProductAttention,
+)
+from prope.per_token_camera import (
+    PropeDotProductAttention as PerTokenCameraPropeDotProductAttention,
+)
+from prope.utils.functional import random_SE3, random_SO3
 
 
-@pytest.mark.parametrize("no_intrinics", [True, False])
-def test_compare_jax_torch(no_intrinics: bool):
+@pytest.mark.skip(reason="benchmarking")
+def test_benchmark_prope_torch():
     torch.manual_seed(42)
     cameras = 3
     patches_x = 8
@@ -52,45 +56,33 @@ def test_compare_jax_torch(no_intrinics: bool):
     k = torch.randn(batch, num_heads, seqlen, head_dim)
     v = torch.randn(batch, num_heads, seqlen, head_dim)
 
-    viewmats = torch.eye(4).repeat(batch, cameras, 1, 1)
+    viewmats = random_SE3(batch_size=(batch, cameras))
+    Ks = random_SO3(batch_size=(batch, cameras))
 
-    if no_intrinics:
-        Ks = None
-    else:
-        Ks = torch.rand(batch, cameras, 3, 3)
-
-    out_jax = PropeDotProductAttentionJax(
-        head_dim=head_dim,
-        cameras=cameras,
-        patches_x=patches_x,
-        patches_y=patches_y,
-        image_width=image_width,
-        image_height=image_height,
-    )(
-        q.permute(0, 2, 1, 3).numpy(),
-        k.permute(0, 2, 1, 3).numpy(),
-        v.permute(0, 2, 1, 3).numpy(),
-        viewmats=viewmats.numpy(),
-        Ks=Ks.numpy() if Ks is not None else None,
-    )
-    out_torch = PropeDotProductAttentionTorch(
+    # All tokens in the same image have the same camera parameter. [i.e. no distortion]
+    prope1 = PerImgCameraPropeDotProductAttention(
         head_dim=head_dim,
         patches_x=patches_x,
         patches_y=patches_y,
         image_width=image_width,
         image_height=image_height,
-    )(
-        q,
-        k,
-        v,
-        viewmats=viewmats,
-        Ks=Ks,
     )
+    outputs1 = prope1(q, k, v, viewmats, Ks)
 
-    np.testing.assert_allclose(
-        out_jax, out_torch.permute(0, 2, 1, 3).numpy(), atol=1e-4, rtol=1e-4
+    # Each token has its own camera parameter. Here we repeat the camera parameters for each token.
+    viewmats = torch.repeat_interleave(viewmats, patches_x * patches_y, 1)
+    Ks = torch.repeat_interleave(Ks, patches_x * patches_y, 1)
+    prope2 = PerTokenCameraPropeDotProductAttention(
+        head_dim=head_dim,
+        patches_x=patches_x,
+        patches_y=patches_y,
+        image_width=image_width,
+        image_height=image_height,
     )
+    outputs2 = prope2(q, k, v, viewmats, Ks)
+
+    torch.testing.assert_close(outputs1, outputs2)
 
 
 if __name__ == "__main__":
-    test_compare_jax_torch(no_intrinics=False)
+    test_benchmark_prope_torch()

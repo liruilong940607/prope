@@ -22,7 +22,7 @@
 # SOFTWARE.
 
 # How to use PRoPE attention for self-attention:
-# 
+#
 # 1. Easiest way (fast):
 #    attn = PropeDotProductAttention(...)
 #    o = attn(q, k, v, viewmats, Ks)
@@ -35,12 +35,12 @@
 #    v = attn._apply_to_kv(v)
 #    o = F.scaled_dot_product_attention(q, k, v, **kwargs)
 #    o = attn._apply_to_o(o)
-# 
+#
 # 3. The most flexible way (but slower because repeated computation of RoPE coefficients):
 #    o = prope_dot_product_attention(q, k, v, ...)
-# 
+#
 # How to use PRoPE attention for cross-attention:
-# 
+#
 #    attn_src = PropeDotProductAttention(...)
 #    attn_tgt = PropeDotProductAttention(...)
 #    attn_src._precompute_and_cache_apply_fns(viewmats_src, Ks_src)
@@ -52,7 +52,7 @@
 #    o_src = attn_src._apply_to_o(o_src)
 
 from functools import partial
-from typing import Callable, Optional, Tuple, List
+from typing import Callable, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -115,8 +115,8 @@ class PropeDotProductAttention(torch.nn.Module):
         q: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         k: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
         v: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
-        viewmats: torch.Tensor,  # (batch, cameras, 4, 4)
-        Ks: Optional[torch.Tensor],  # (batch, cameras, 3, 3)
+        viewmats: torch.Tensor,  # (batch, seqlen, 4, 4) per token camera
+        Ks: Optional[torch.Tensor],  # (batch, seqlen, 3, 3) per token camera
         **kwargs,
     ) -> torch.Tensor:
         return prope_dot_product_attention(
@@ -137,10 +137,10 @@ class PropeDotProductAttention(torch.nn.Module):
     def _precompute_and_cache_apply_fns(
         self, viewmats: torch.Tensor, Ks: Optional[torch.Tensor]
     ):
-        (batch, cameras, _, _) = viewmats.shape
-        assert viewmats.shape == (batch, cameras, 4, 4)
-        assert Ks is None or Ks.shape == (batch, cameras, 3, 3)
-        self.cameras = cameras
+        (batch, seqlen, _, _) = viewmats.shape
+        assert viewmats.shape == (batch, seqlen, 4, 4)
+        assert Ks is None or Ks.shape == (batch, seqlen, 3, 3)
+        self.seq_len = seqlen
 
         self.apply_fn_q, self.apply_fn_kv, self.apply_fn_o = _prepare_apply_fns(
             head_dim=self.head_dim,
@@ -156,7 +156,7 @@ class PropeDotProductAttention(torch.nn.Module):
 
     def _apply_to_q(self, q: torch.Tensor) -> torch.Tensor:
         (batch, num_heads, seqlen, head_dim) = q.shape
-        assert seqlen == self.cameras * self.patches_x * self.patches_y
+        assert seqlen == self.seq_len
         assert head_dim == self.head_dim
         assert q.shape == (batch, num_heads, seqlen, head_dim)
         assert self.apply_fn_q is not None
@@ -164,7 +164,7 @@ class PropeDotProductAttention(torch.nn.Module):
 
     def _apply_to_kv(self, kv: torch.Tensor) -> torch.Tensor:
         (batch, num_heads, seqlen, head_dim) = kv.shape
-        assert seqlen == self.cameras * self.patches_x * self.patches_y
+        assert seqlen == self.seq_len
         assert head_dim == self.head_dim
         assert kv.shape == (batch, num_heads, seqlen, head_dim)
         assert self.apply_fn_kv is not None
@@ -172,7 +172,7 @@ class PropeDotProductAttention(torch.nn.Module):
 
     def _apply_to_o(self, o: torch.Tensor) -> torch.Tensor:
         (batch, num_heads, seqlen, head_dim) = o.shape
-        assert seqlen == self.cameras * self.patches_x * self.patches_y
+        assert seqlen == self.seq_len
         assert head_dim == self.head_dim
         assert o.shape == (batch, num_heads, seqlen, head_dim)
         assert self.apply_fn_o is not None
@@ -184,8 +184,8 @@ def prope_dot_product_attention(
     k: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
     v: torch.Tensor,  # (batch, num_heads, seqlen, head_dim)
     *,
-    viewmats: torch.Tensor,  # (batch, cameras, 4, 4)
-    Ks: Optional[torch.Tensor],  # (batch, cameras, 3, 3)
+    viewmats: torch.Tensor,  # (batch, seqlen, 4, 4) per token camera
+    Ks: Optional[torch.Tensor],  # (batch, seqlen, 3, 3) per token camera
     patches_x: int,  # How many patches wide is each image?
     patches_y: int,  # How many patches tall is each image?
     image_width: int,  # Width of the image. Used to normalize intrinsics.
@@ -206,11 +206,9 @@ def prope_dot_product_attention(
     """
     # We're going to assume self-attention: all inputs are the same shape.
     (batch, num_heads, seqlen, head_dim) = q.shape
-    cameras = viewmats.shape[1]
     assert q.shape == k.shape == v.shape
-    assert viewmats.shape == (batch, cameras, 4, 4)
-    assert Ks is None or Ks.shape == (batch, cameras, 3, 3)
-    assert seqlen == cameras * patches_x * patches_y
+    assert viewmats.shape == (batch, seqlen, 4, 4)
+    assert Ks is None or Ks.shape == (batch, seqlen, 3, 3)
 
     apply_fn_q, apply_fn_kv, apply_fn_o = _prepare_apply_fns(
         head_dim=head_dim,
@@ -237,8 +235,8 @@ def prope_dot_product_attention(
 
 def _prepare_apply_fns(
     head_dim: int,  # Q/K/V will have this last dimension
-    viewmats: torch.Tensor,  # (batch, cameras, 4, 4)
-    Ks: Optional[torch.Tensor],  # (batch, cameras, 3, 3)
+    viewmats: torch.Tensor,  # (batch, seqlen, 4, 4) per token camera
+    Ks: Optional[torch.Tensor],  # (batch, seqlen, 3, 3) per token camera
     patches_x: int,  # How many patches wide is each image?
     patches_y: int,  # How many patches tall is each image?
     image_width: int,  # Width of the image. Used to normalize intrinsics.
@@ -252,7 +250,8 @@ def _prepare_apply_fns(
 ]:
     """Prepare transforms for PRoPE-style positional encoding."""
     device = viewmats.device
-    (batch, cameras, _, _) = viewmats.shape
+    (batch, seqlen, _, _) = viewmats.shape
+    cameras = seqlen // (patches_x * patches_y)
 
     # Normalize camera intrinsics.
     if Ks is not None:
@@ -282,7 +281,7 @@ def _prepare_apply_fns(
         P_T = P.transpose(-1, -2)
         P_inv = _invert_SE3(viewmats)
 
-    assert P.shape == P_inv.shape == (batch, cameras, 4, 4)
+    assert P.shape == P_inv.shape == (batch, seqlen, 4, 4)
 
     # Precompute cos/sin terms for RoPE. We use tiles/repeats for 'row-major'
     # broadcasting.
@@ -332,21 +331,19 @@ def _prepare_apply_fns(
 
 def _apply_tiled_projmat(
     feats: torch.Tensor,  # (batch, num_heads, seqlen, feat_dim)
-    matrix: torch.Tensor,  # (batch, cameras, D, D)
+    matrix: torch.Tensor,  # (batch, seqlen, D, D)
 ) -> torch.Tensor:
     """Apply projection matrix to features."""
     # - seqlen => (cameras, patches_x * patches_y)
     # - feat_dim => (feat_dim // 4, 4)
     (batch, num_heads, seqlen, feat_dim) = feats.shape
-    cameras = matrix.shape[1]
-    assert seqlen > cameras and seqlen % cameras == 0
     D = matrix.shape[-1]
-    assert matrix.shape == (batch, cameras, D, D)
+    assert matrix.shape == (batch, seqlen, D, D)
     assert feat_dim % D == 0
     return torch.einsum(
-        "bcij,bncpkj->bncpki",
+        "btij,bntkj->bntki",
         matrix,
-        feats.reshape((batch, num_heads, cameras, -1, feat_dim // D, D)),
+        feats.reshape((batch, num_heads, seqlen, feat_dim // D, D)),
     ).reshape(feats.shape)
 
 

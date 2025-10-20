@@ -66,6 +66,7 @@ def _normalize_poses_identity_unit_distance(
     ref0_c2w = in_c2ws[ref0_idx]
     c2ws = torch.einsum("ij,njk->nik", torch.linalg.inv(ref0_c2w), in_c2ws)
 
+    ref0_c2w = c2ws[ref0_idx]
     ref1_c2w = c2ws[ref1_idx]
     dist = torch.linalg.norm(ref1_c2w[:3, 3] - ref0_c2w[:3, 3])
     if dist > 1e-2:  # numerically stable

@@ -9,8 +9,8 @@ This is the official repo for the paper "Cameras as Relative Positional Encoding
 
 ## Used by
 - :fire: Tencent Hunyuan World Model 1.5 (WorldPlay) uses PRoPE for camera control: [Link](https://3d-models.hunyuan.tencent.com/world/)
-- This paper extends PRoPE to work with distorted cameras: [Link](https://arxiv.org/abs/2512.07237)
-- This paper uses PRoPE for feed-forward reconstruction: [Link](https://gynjn.github.io/MVP/)
+- A paper extends PRoPE to work with distorted cameras: [Link](https://arxiv.org/abs/2512.07237)
+- A paper uses PRoPE for feed-forward reconstruction: [Link](https://gynjn.github.io/MVP/)
 
 
 ## Implementations
